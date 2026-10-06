@@ -1,10 +1,10 @@
 import { useState } from 'react';
-import { page, userEvent } from 'vitest/browser';
+import { page, userEvent } from 'vite-plus/test/browser';
 
 import type { Column } from '../../src';
 import { renderTextEditor, SelectColumn, TreeDataGrid } from '../../src';
 import { rowActiveClassname } from '../../src/style/row';
-import { canCopyPaste, getCellsAtRowIndex, getRowWithCell, testCount, testRowCount } from './utils';
+import { getCellsAtRowIndex, getRowWithCell, testCount, testRowCount } from './utils';
 
 const treeGrid = page.getTreeGrid();
 const headerRow = treeGrid.getHeaderRow();
@@ -412,7 +412,7 @@ test('cell navigation in a treegrid', async () => {
   await testRowCount(4);
 });
 
-test('copy/paste when grouping is enabled', { fails: !canCopyPaste }, async () => {
+test('copy/paste when grouping is enabled', async () => {
   await setup(['year']);
   await userEvent.click(page.getCell({ name: '2021' }));
   await userEvent.copy();
