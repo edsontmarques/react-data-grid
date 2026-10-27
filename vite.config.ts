@@ -1,9 +1,10 @@
+import { basename } from 'node:path';
 import react from '@vitejs/plugin-react';
 import { ecij } from 'ecij/plugin';
 import { Features } from 'lightningcss';
 import { defineConfig, lazyPlugins } from 'vite-plus';
 import { playwright, type PlaywrightProviderOptions } from 'vite-plus/test/browser-playwright';
-import type { BrowserCommandContext } from 'vite-plus/test/node';
+import type { BrowserCommandContext, BrowserInstanceOption } from 'vite-plus/test/node';
 
 import pkg from './package.json' with { type: 'json' };
 
@@ -11,6 +12,7 @@ const isCI = process.env.CI === 'true';
 const isCIWorkflow = process.env.GITHUB_WORKFLOW === 'CI';
 const isTest = process.env.VITEST === 'true';
 const isAgent = process.env.AI_AGENT !== undefined;
+const isWindows = process.platform === 'win32';
 
 // TODO: remove when `userEvent.pointer` is supported
 async function resizeColumn(
@@ -34,23 +36,31 @@ async function resizeColumn(
 }
 
 // TODO: remove when `userEvent.pointer` is supported
-async function dragFill(
-  { page, iframe, project }: BrowserCommandContext,
-  from: string,
-  to: string
-) {
+async function dragFill({ page, iframe }: BrowserCommandContext, from: string, to: string) {
   await iframe.getByRole('gridcell', { name: from, exact: true }).click();
   await iframe.locator('.rdg-cell-drag-handle').hover();
   await page.mouse.down();
-  await iframe.getByRole('gridcell', { name: to, exact: true }).hover();
-  if (project.name.includes('webkit')) {
-    // let React re-render after handleDragHandlePointerMove calls setDraggedOverRowIdx()
-    await new Promise((resolve) => {
-      setTimeout(resolve, 20);
-    });
-  }
+  const target = iframe.getByRole('gridcell', { name: to, exact: true });
+  await target.hover();
+  // the grid fills the cells it rendered as dragged over, so wait for it to render the drag
+  await target.and(iframe.locator('.rdg-cell-dragged-over')).waitFor();
   await page.mouse.up();
 }
+
+// TODO: remove when vite-plus detects TypeScript 7.1 as TypeScript 7
+async function getTscPath(): Promise<string> {
+  const { default: getExePath } = await import('./node_modules/typescript/lib/getExePath.js');
+  return getExePath();
+}
+
+// shared by Vite and `vp pack`
+const reactPlugin = react({
+  // warn about the code React Compiler can't compile, which fails `vp pack` with `failOnWarn`
+  compiler: { reportDiagnostics: true },
+  // `vp pack` passes the declaration files it generates through the plugin,
+  // and the compiler's TypeScript transform would strip all of their declarations
+  exclude: [/\/node_modules\//, /\.d\.ts$/]
+});
 
 const actionTimeout = 2000;
 const viewport = { width: 1920, height: 1080 } as const;
@@ -60,6 +70,23 @@ const playwrightOptions: PlaywrightProviderOptions = {
     viewport
   }
 };
+const firefoxProvider = playwright({
+  ...playwrightOptions,
+  launchOptions: {
+    firefoxUserPrefs: {
+      'accessibility.force_disabled': 1
+    }
+  }
+});
+// Firefox sends the mouse events of all its pages with the same pointer ID,
+// so a page that captures the pointer also receives the other pages' mouse events.
+// These tests drag a resize or drag-fill handle, which captures the pointer,
+// so each of them runs in a browser of its own.
+// https://github.com/microsoft/playwright/issues/43631
+const firefoxPointerCaptureTests = [
+  'browser/dragFill.test.tsx',
+  'browser/column/resizable.test.tsx'
+];
 
 export default defineConfig({
   staged: {
@@ -113,6 +140,19 @@ export default defineConfig({
           // `vp pack` cleans `lib/` before writing to it
           input: [{ auto: true }, '!lib/**']
         }
+      },
+      // the first step of a release, see the header of `.github/workflows/publish.yml`:
+      // arguments are passed to `npm version`, as `vp run` appends them to the last command
+      version: {
+        command: [
+          'git switch main',
+          // also deletes local tags that aren't on GitHub
+          'git fetch --prune --prune-tags origin',
+          // keeps uncommitted changes, which `npm version` refuses to run with
+          'git reset --keep origin/main',
+          'npm version'
+        ],
+        cache: false
       }
     }
   },
@@ -126,13 +166,6 @@ export default defineConfig({
     modulePreload: { polyfill: false },
     sourcemap: true,
     rolldownOptions: {
-      // TODO: remove
-      // https://github.com/vitejs/vite/issues/23350
-      experimental: {
-        chunkImportMap: {
-          baseUrl: '/react-data-grid/'
-        }
-      },
       output: {
         codeSplitting: {
           groups: [
@@ -166,7 +199,7 @@ export default defineConfig({
           autoCodeSplitting: true
         })
       ),
-    react({ compiler: true })
+    reactPlugin
   ]),
 
   server: {
@@ -178,6 +211,8 @@ export default defineConfig({
     target: ['baseline-widely-available', 'node24.0.0'],
     platform: 'neutral',
     sourcemap: true,
+    failOnWarn: isAgent || 'ci-only',
+    suppressWarnings: 'TypeScript 7.0 does not yet have a stable API and is experimental.',
     treeshake: {
       moduleSideEffects: false,
       propertyReadSideEffects: false,
@@ -197,7 +232,15 @@ export default defineConfig({
     },
     dts: {
       build: true,
-      tsconfig: './tsconfig.src.json'
+      tsconfig: './tsconfig.src.json',
+      // TODO: remove when vite-plus detects TypeScript 7.1 as TypeScript 7
+      generator: 'tsgo',
+      tsgo: {
+        path: await getTscPath()
+      }
+    },
+    publint: {
+      strict: true
     },
     plugins: [
       ecij({
@@ -205,15 +248,14 @@ export default defineConfig({
         // between multiple versions of RDG on the same page
         classPrefix: `rdg-${pkg.version.replaceAll('.', '-')}-`
       }),
-      react({
-        compiler: true,
-        exclude: [/node_modules/, /\.d\.ts$/]
-      })
+      reactPlugin
     ]
   },
 
   test: {
     dir: 'test',
+    // TODO: remove, conflicts with ecij at the moment
+    fsModuleCache: false,
     globals: true,
     injectCjsGlobals: false,
     printConsoleTrace: true,
@@ -240,6 +282,13 @@ export default defineConfig({
       }
     },
     slowTestThreshold: 1000,
+    // On Windows, WebKit slows down the mouse events of Playwright's Firefox,
+    // which dispatches those of all its pages one after the other,
+    // so with all cores but one as workers, Firefox's clicks time out.
+    // In a terminal, the browser instances get half the cores anyway, as in watch mode,
+    // since they don't inherit the `watch: false` of `vitest run`.
+    // https://github.com/vitest-dev/vitest/issues/11721
+    ...(isWindows && { maxWorkers: '50%' }),
     browser: {
       headless: true,
       ui: false,
@@ -266,17 +315,17 @@ export default defineConfig({
         },
         {
           browser: 'firefox',
-          provider: playwright({
-            ...playwrightOptions,
-            launchOptions: {
-              firefoxUserPrefs: {
-                'accessibility.force_disabled': 1
-              }
-            }
-          }),
-          // TODO: remove when FF tests are stable
-          fileParallelism: false
+          exclude: firefoxPointerCaptureTests,
+          provider: firefoxProvider
         },
+        // the names sort after `browser (webkit)`, so with few workers, as in CI,
+        // WebKit's tests start before these
+        ...firefoxPointerCaptureTests.map((test): BrowserInstanceOption => ({
+          name: `firefox (${basename(test).split('.')[0]})`,
+          browser: 'firefox',
+          include: [test],
+          provider: firefoxProvider
+        })),
         {
           browser: 'webkit',
           provider: playwright(playwrightOptions)
@@ -634,7 +683,7 @@ copy(
       'react/static-components': 'warn',
       'react/style-prop-object': 'warn',
       'react/syntax': 'warn',
-      'react/todo': 'off',
+      'react/todo': 'warn',
       'react/unsupported-syntax': 'warn',
       'react/use-memo': 'warn',
       'react/void-dom-elements-no-children': 'warn',

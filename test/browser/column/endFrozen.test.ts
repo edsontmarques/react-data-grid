@@ -56,7 +56,7 @@ test('end-frozen columns have a specific class and are stable-sorted at the tail
   await expect.element(cell5).toHaveClass(cellClassname, cellFrozenEndClassname, { exact: true });
 });
 
-test('frozen: true is normalized to start-frozen (backwards compat)', async () => {
+test('frozen: true is normalized to start-frozen (backward compat)', async () => {
   const columns: readonly Column<never>[] = [
     {
       key: 'col1',
@@ -200,7 +200,7 @@ test('end-frozen cells in bottom summary rows carry the end-frozen class', async
 });
 
 test('reordering input columns past end-frozen preserves band integrity', async () => {
-  // User provides columns in an arbitrary order (e.g. end-frozen in the middle);
+  // User provides columns in an arbitrary order (e.g., end-frozen in the middle);
   // the grid must still sort end-frozen columns to the tail.
   const columns: readonly Column<never>[] = [
     { key: 'end1', name: 'end1', frozen: 'end' },
@@ -232,7 +232,7 @@ test('keyboard navigation reaches end-frozen columns', async () => {
   await expect.element(page.getActiveCell()).toHaveAttribute('aria-colindex', '3');
 });
 
-test('colSpan from an unfrozen column into the end-frozen band is dropped', async () => {
+test('colSpan from an unfrozen column into the end-frozen band is clamped', async () => {
   const columns: readonly Column<number>[] = [
     { key: 'a', name: 'a' },
     {
@@ -249,7 +249,7 @@ test('colSpan from an unfrozen column into the end-frozen band is dropped', asyn
 
   await setup({ columns, rows: [1] });
 
-  // colSpan is ignored (boundary crossed) → all three cells render independently
+  // colSpan is clamped to 1 (boundary crossed) → all three cells render independently
   await expect.element(getCellsAtRowIndex(0)).toHaveLength(3);
 });
 

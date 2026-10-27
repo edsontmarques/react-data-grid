@@ -51,7 +51,7 @@ export function useActivePosition<R, SR>({
    * Returns whether the given position represents a valid cell or row position in the grid.
    * Active bounds: any valid position in the grid
    * Viewport: any valid position in the grid outside of header rows and summary rows
-   * Row selection is only allowed in TreeDataGrid
+   * Only TreeDataGrid allows the active position to be on a row (`idx: -1`)
    */
   function validatePosition({ idx, rowIdx }: Position) {
     // check column position
@@ -84,18 +84,59 @@ export function useActivePosition<R, SR>({
     };
   }
 
-  function getResolvedValues(position: ActivePosition | EditPosition<R>) {
+  function resolveActivePosition(position: ActivePosition | EditPosition<R>) {
+    const validatedPosition = validatePosition(position);
+
+    if (position !== initialActivePosition) {
+      // Reinitialize the active position and immediately use the new state if it is no longer valid.
+      // This can happen when a column or row is removed.
+      if (!validatedPosition.isPositionInActiveBounds) {
+        setActivePosition(initialActivePosition);
+        setDraggedOverRowIdx(undefined);
+        return resolveActivePosition(initialActivePosition);
+      }
+
+      if (position.mode === 'EDIT') {
+        const closeOnExternalRowChange =
+          columns[position.idx].editorOptions?.closeOnExternalRowChange ?? true;
+
+        // Discard changes if the row is updated from outside,
+        // or if removing rows moved the position to a summary row
+        if (
+          !validatedPosition.isCellInViewport ||
+          (closeOnExternalRowChange && rows[position.rowIdx] !== position.originalRow)
+        ) {
+          const newPosition: ActivePosition = {
+            idx: position.idx,
+            rowIdx: position.rowIdx,
+            mode: 'ACTIVE'
+          };
+          setActivePosition(newPosition);
+          setPositionToFocus(null);
+          return resolveActivePosition(newPosition);
+        }
+      }
+    }
+
     return {
       resolvedActivePosition: position,
-      validatedPosition: validatePosition(position)
+      validatedPosition
     };
   }
 
+  const { resolvedActivePosition, validatedPosition } = resolveActivePosition(activePosition);
+
+  function queryActiveColumn(): CalculatedColumn<R, SR> | undefined {
+    if (!validatedPosition.isCellInActiveBounds) return;
+    return columns[resolvedActivePosition.idx];
+  }
+
   function getActiveColumn() {
-    if (!validatedPosition.isCellInActiveBounds) {
+    const column = queryActiveColumn();
+    if (column === undefined) {
       throw new Error('No column for active position');
     }
-    return columns[resolvedActivePosition.idx];
+    return column;
   }
 
   function getActiveRow() {
@@ -105,37 +146,9 @@ export function useActivePosition<R, SR>({
     return rows[resolvedActivePosition.rowIdx];
   }
 
-  let { resolvedActivePosition, validatedPosition } = getResolvedValues(activePosition);
-
-  // Reinitialize the active position and immediately use the new state if it is no longer valid.
-  // This can happen when a column or row is removed.
-  if (
-    !validatedPosition.isPositionInActiveBounds &&
-    resolvedActivePosition !== initialActivePosition
-  ) {
-    setActivePosition(initialActivePosition);
-    setDraggedOverRowIdx(undefined);
-    ({ resolvedActivePosition, validatedPosition } = getResolvedValues(initialActivePosition));
-  } else if (resolvedActivePosition.mode === 'EDIT') {
-    const closeOnExternalRowChange =
-      getActiveColumn().editorOptions?.closeOnExternalRowChange ?? true;
-
-    // Discard changes if the row is updated from outside
-    if (closeOnExternalRowChange && getActiveRow() !== resolvedActivePosition.originalRow) {
-      const newPosition: ActivePosition = {
-        idx: resolvedActivePosition.idx,
-        rowIdx: resolvedActivePosition.rowIdx,
-        mode: 'ACTIVE'
-      };
-      setActivePosition(newPosition);
-      setPositionToFocus(null);
-      ({ resolvedActivePosition, validatedPosition } = getResolvedValues(newPosition));
-    }
-  }
-
   useLayoutEffect(() => {
     // Layout effects clean up when the component is replaced by a suspense fallback,
-    // or when under <Activity mode="hidden">, then re-mounts when the suspense boundary cleans,
+    // or when under <Activity mode="hidden">, then re-mount when the suspense boundary resolves,
     // or when Activity switches back to `mode="visible"`.
     // So we use a ref to:
     // 1. avoid re-focusing after the effect re-mounts
@@ -160,6 +173,7 @@ export function useActivePosition<R, SR>({
     activePositionIsRow: validatedPosition.isRowInActiveBounds,
     activePositionIsCellInViewport: validatedPosition.isCellInViewport,
     validatePosition,
+    queryActiveColumn,
     getActiveColumn,
     getActiveRow
   } as const;
