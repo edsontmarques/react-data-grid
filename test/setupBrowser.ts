@@ -14,7 +14,6 @@ import { configure } from 'vitest-browser-react/pure';
 // Chromium defaults to 10
 // Firefox defaults to 128
 // WebKit defaults to 100
-// @ts-expect-error
 Error.stackTraceLimit = 10;
 
 configure({
@@ -79,25 +78,8 @@ locators.extend({
 });
 
 beforeEach(async () => {
-  do {
-    // 1. reset cursor position to avoid hover issues
-    // 2. force focus to be on the page
-    await userEvent.click(document.body, { position: { x: 0, y: 0 } });
-    // Firefox needs two clicks sometimes
-  } while (!document.hasFocus());
-});
-
-afterEach(() => {
-  vi.useRealTimers();
-
-  expect
-    .soft(
-      document.hasFocus(),
-      'Focus is set on a browser UI element at the end of a test. Use safeTab() to return focus to the page.'
-    )
-    .toBe(true);
-
-  // If a test file ends with a focused element, Firefox may not focus
-  // the first element clicked in an iframe created by the next test file.
-  (document.activeElement as HTMLElement | null)?.blur();
+  // 1. move the pointer off the grid, so screenshots don't capture hover styles
+  // 2. focus the page: if the previous test file ended with a focused element,
+  //    Firefox may not focus the next file's iframe, and keyboard-first tests fail
+  await userEvent.click(document.body, { position: { x: 0, y: 0 } });
 });

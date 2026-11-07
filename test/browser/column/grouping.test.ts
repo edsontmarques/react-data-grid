@@ -1,13 +1,13 @@
 import { page, userEvent } from 'vite-plus/test/browser';
 
 import type { ColumnOrColumnGroup } from '../../../src';
-import { safeTab, setup, testCount, validateCellPosition } from '../utils';
+import { setup, testCount, validateCellPosition } from '../utils';
 
 const grid = page.getGrid();
 const headerRows = grid.getHeaderRow();
 const headerCells = grid.getHeaderCell();
 
-const columns: readonly ColumnOrColumnGroup<NonNullable<unknown>>[] = [
+const columns: readonly ColumnOrColumnGroup<object>[] = [
   { key: 'col1', name: 'col 1' },
   {
     name: 'group 1',
@@ -255,7 +255,7 @@ test('keyboard navigation', async () => {
   // no initial active position
   await expect.element(grid.getActiveCell()).not.toBeInTheDocument();
 
-  await safeTab();
+  await userEvent.tab();
   await validateCellPosition(0, 3);
 
   // page up on the main header row does nothing
@@ -325,21 +325,21 @@ test('keyboard navigation', async () => {
   await validateCellPosition(10, 3);
 
   // tab navigation
-  await safeTab();
+  await userEvent.tab();
   await validateCellPosition(11, 3);
-  await safeTab(true);
-  await safeTab(true);
-  await safeTab(true);
+  await userEvent.tab({ shift: true });
+  await userEvent.tab({ shift: true });
+  await userEvent.tab({ shift: true });
   await validateCellPosition(8, 3);
   await userEvent.keyboard('{arrowup}');
-  await safeTab(true);
+  await userEvent.tab({ shift: true });
   await validateCellPosition(4, 0);
-  await safeTab();
+  await userEvent.tab();
   await validateCellPosition(8, 0);
 
   await userEvent.keyboard('{home}{end}');
-  await safeTab();
+  await userEvent.tab();
   await validateCellPosition(0, 4);
-  await safeTab(true);
+  await userEvent.tab({ shift: true });
   await validateCellPosition(11, 3);
 });
